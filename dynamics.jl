@@ -6,7 +6,7 @@ dt = 0.01
 T = 5.0
 N = Int(T/dt)
 
-function psi_dynamics(psi0, u, dt, delta, sigmaz, omega, sigmax)
+function psi_dynamics(psi0, u, dt, delta, sigmaz, omega, sigmax, N = N)
     # psi = Vector(undef, Int(T/dt))
     h0 = (delta*sigmaz)/2
     h1 = (omega*sigmax)/2

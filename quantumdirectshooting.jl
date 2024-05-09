@@ -1,6 +1,5 @@
 include("dynamics.jl")
 
-
 function disc_final_time_obj(u, p = [delta, sigmaz, omega, sigmax, psitarget, psi0])
     delta, sigmaz, omega, sigmax, psitarget, psi0 = p
 
@@ -26,8 +25,9 @@ plot(fidelityy)
 optf = OptimizationFunction(disc_final_time_obj, AutoForwardDiff())
 prob = OptimizationProblem(optf, u0, [delta, sigmaz, omega, sigmax, psitarget, psi0] , lb = [-1.0 for i in 1:N], ub = [1.0 for i in 1:N])
 @time res = solve(prob, Ipopt.Optimizer(), maxiters = 5000)
-
-@time res = solve(prob, Optimization.LBFGS(), maxiters = 5000)
+@time solve!(res.cache)
+@time res1 = solve(prob, Optimization.LBFGS(), maxiters = 5000)
+@time solve!(res1.cache)
 
 optf = Optimization.instantiate_function(optf, u0, AutoForwardDiff(), [delta, sigmaz, omega, sigmax, psitarget, psi0])
 
