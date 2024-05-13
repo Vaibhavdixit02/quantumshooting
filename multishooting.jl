@@ -1,6 +1,6 @@
 include("dynamics.jl")
 
-using SparseArrays, ThreadsX
+using SparseArrays, MadNLP
 
 u0 = [rand([-1.0,1.0]) for i in 1:N]
 
@@ -39,16 +39,9 @@ function multi_shoot_cons(cons, u_psi, p = [delta, sigmaz, omega, sigmax, psitar
     h1 = (omega*sigmax)/2
 
     psiii = psi0
-    # expmethod = ExponentialUtilities.ExpMethodHigham2005()
-    # expcache = ExponentialUtilities.alloc_mem(-im * (h0 + (h1*u[1]))*dt, expmethod)
-    # psi1 = exponential!(-im * (h0 + (h1*u[1]))*dt, expmethod, expcache) * psiii
-    psisim = Vector{typeof(psi1)}(undef, Int(N/5))
     
-    # j = 1
-    # for i in 1:N-2
-    #     psisim[j] = exponential!(-im * (h0 + (h1*u[i]))*dt, expmethod, expcache) * psiii
-    #     psiii = psi[i] ./ norm(psi[i]) # Normalize the state from the optimization variables vector
-    # end
+    psisim = Vector{typeof(psi1)}(undef, Int(N/5))
+
 
     for i in 1:Int(N/5)
         psisim[i] = psi_dynamics(psiii, u[i*5-4:i*5], dt, delta, sigmaz, omega, sigmax, 5)[end]
@@ -96,10 +89,13 @@ prob = OptimizationProblem(optf, u0, [delta, sigmaz, omega, sigmax, psitarget, p
 c = zeros(4*Int(N/5))
 @time multi_shoot_cons(c, u0)
 
-optf = Optimization.instantiate_function(optf, u0, AutoSparseForwardDiff(), [delta, sigmaz, omega, sigmax, psitarget, psi0], 4*(N-2))
+optf = Optimization.instantiate_function(optf, u0, AutoSparseForwardDiff(), [delta, sigmaz, omega, sigmax, psitarget, psi0], Int(4*(N/5)))
 
 ch = [Float64.(chh) for chh in cons_hess_pattern]
 @time optf.cons_h(ch, u0)
+
+H1 = Float64.(hessobj_pattern)
+@time optf.hess(H1, u0)
 
 @show res1.objective
 @show res1.minimizer
@@ -109,18 +105,58 @@ psi = [make_complex_state(res1.u[i:i+3]) for i in N+1:4:length(res1.u)]
 fidelityy = [1- fidelity(x,psitarget) for x in psi]
 plot(fidelityy)
 
-psi = vcat(psi, psi_dynamics(psi[end], res1.u[496:500], dt, delta, sigmaz, omega, sigmax, 5))
+function disc_stabilization_multishoot_obj(u_psi, p = [delta, sigmaz, omega, sigmax, psitarget, psi0])
+    delta, sigmaz, omega, sigmax, psitarget, psi0 = p
 
-optf = Optimization.instantiate_function(optf, u0, AutoForwardDiff(), [delta, sigmaz, omega, sigmax, psitarget, psi0])
+    u = u_psi[1:N]
 
-psiplot = Array(hcat([norm.(p) for p in psi]...)')
-plot(psiplot)
+    psi1 = make_complex_state(u_psi[N+1:N+4])
+    psi = Vector{typeof(psi1)}(undef, Int(N/5))
+    j = 1
+    for i in N+1:4:length(u_psi)
+        psi[j] = make_complex_state(u_psi[i:i+3])
+        j += 1
+    end
 
-G3 = Vector(undef, length(prob.u0))
-optf.grad(G3, u0)
+    delta, sigmaz, omega, sigmax, psitarget, psi0 = p
+    h0 = (delta*sigmaz)/2
+    h1 = (omega*sigmax)/2
 
-multi_shoot_cons(zeros(N-1), u0)
+    psiii = psi0
 
-H = zeros(N, N)
-optf.cons_h(H, u0)
+    psisim = Vector{typeof(psi1)}(undef, N)
 
+    j = 1
+    for i in 1:5:N
+        psisim[i:i+4] = psi_dynamics(psiii, u[i:i+4], dt, delta, sigmaz, omega, sigmax, 5)
+        psiii = psi[j] ./ norm(psi[j]) # Normalize the state from the optimization variables vector
+        j += 1
+    end
+
+    return sum(1 .- fidelity.(psisim, Ref(psitarget)))
+end
+
+hessobj_pattern = deserialize("hessobj_stab_pattern.jld")
+optf = OptimizationFunction(disc_stabilization_multishoot_obj, AutoSparseForwardDiff(), cons = multi_shoot_cons, hess_prototype = hessobj_pattern, cons_jac_prototype = jacpattern, cons_hess_prototype = cons_hess_pattern)
+prob = OptimizationProblem(optf, u0, [delta, sigmaz, omega, sigmax, psitarget, psi0] , lb = [-1.0 for i in 1:length(u0)], ub = [1.0 for i in 1:length(u0)], lcons = [0.0 for i in 1:4*Int(N/5)], ucons = [0.0 for i in 1:4*Int(N/5)])
+
+@time res = solve(prob, MadNLP.Optimizer(print_level=MadNLP.INFO, max_iter=100), maxiters = 500)
+
+optf = Optimization.instantiate_function(optf, u0, AutoSparseForwardDiff(), [delta, sigmaz, omega, sigmax, psitarget, psi0], Int(4*(N/5)))
+
+G1 = zero(u0)
+@time optf.grad(G1, u0)
+
+H1 = Float64.(hessobj_pattern)
+@time optf.hess(H1, u0)
+
+ch = [Float64.(chh) for chh in cons_hess_pattern]
+@time optf.cons_h(ch, u0)
+
+@show res.objective
+@show res.minimizer
+plot(res.u[1:N])
+# plot!(prob.u0)
+psi = [make_complex_state(res.u[i:i+3]) for i in N+1:4:length(res.u)]
+fidelityy = [1- fidelity(x,psitarget) for x in psi]
+plot(fidelityy)

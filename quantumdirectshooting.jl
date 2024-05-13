@@ -31,9 +31,9 @@ prob = OptimizationProblem(optf, u0, [delta, sigmaz, omega, sigmax, psitarget, p
 
 optf = Optimization.instantiate_function(optf, u0, AutoForwardDiff(), [delta, sigmaz, omega, sigmax, psitarget, psi0])
 
-@show res.objective
-@show res.minimizer
-psi = psi_dynamics(psi0, res.minimizer, dt, delta, sigmaz, omega, sigmax)
+@show res1.objective
+@show res1.minimizer
+psi = psi_dynamics(psi0, res1.minimizer, dt, delta, sigmaz, omega, sigmax)
 plot(res.u)
 # plot!(prob.u0)
 fidelityy = [1 - fidelity(x,psitarget) for x in psi]
@@ -49,6 +49,11 @@ G2 = Vector(undef, length(prob.u0))
 gradient_disc_final_time_obj_mayer(G2, u0)
 println(G2)
 
+cldt = 0.001
+clN = Int(T/cldt)
+
+clu0 = [rand([-1.0,1.0]) for i in 1:clN]
+
 function gradient_disc_final_time_obj_mayer(G, u, p = [delta, sigmaz, omega, sigmax, psitarget, psi0])
     delta, sigmaz, omega, sigmax, psitarget, psi0 = p
 
@@ -63,7 +68,7 @@ function gradient_disc_final_time_obj_mayer(G, u, p = [delta, sigmaz, omega, sig
 end
 
 optf = OptimizationFunction(disc_final_time_obj, grad = gradient_disc_final_time_obj_mayer)
-prob = OptimizationProblem(optf, u0, [delta, sigmaz, omega, sigmax, psitarget, psi0] , lb = [-1.0 for i in 1:N], ub = [1.0 for i in 1:N])
+prob = OptimizationProblem(optf, clu0, [delta, sigmaz, omega, sigmax, psitarget, psi0] , lb = [-1.0 for i in 1:clN], ub = [1.0 for i in 1:clN])
 @time res = solve(prob, Optimization.LBFGS(), maxiters = 10000, reltol = 1e-10)
 
 @show res.objective
@@ -81,24 +86,24 @@ plot(res.u)
 fidelity = [1 - fidelityy(x,psitarget) for x in psi]
 plot(fidelity)
 
-# function disc_stabilization_obj(u, p = [delta, sigmaz, omega, sigmax, psitarget, psi0])
-#     delta, sigmaz, omega, sigmax, psitarget, psi0 = p
-#     psi = psi_dynamics(psi0, u, dt, delta, sigmaz, omega, sigmax)
-#     return sum(fidelity.(psi, Ref(psitarget)))
-# end
+function disc_stabilization_obj(u, p = [delta, sigmaz, omega, sigmax, psitarget, psi0])
+    delta, sigmaz, omega, sigmax, psitarget, psi0 = p
+    psi = psi_dynamics(psi0, u, dt, delta, sigmaz, omega, sigmax)
+    return sum(1 .- fidelity.(psi, Ref(psitarget)))
+end
 
 
-# optf = OptimizationFunction(disc_stabilization_obj, AutoForwardDiff())
-# prob = OptimizationProblem(optf, u0, [delta, sigmaz, omega, sigmax, psitarget, psi0] , lb = [-1.0 for i in 1:N], ub = [1.0 for i in 1:N])
-# @time res = solve(prob, Optimization.LBFGS(), maxiters = 5000)
+optf = OptimizationFunction(disc_stabilization_obj, AutoForwardDiff())
+prob = OptimizationProblem(optf, u0, [delta, sigmaz, omega, sigmax, psitarget, psi0] , lb = [-1.0 for i in 1:N], ub = [1.0 for i in 1:N])
+@time res = solve(prob, Optimization.LBFGS(), maxiters = 5000)
 
-# @show res.objective
-# @show res.minimizer
-# psi = psi_dynamics(psi0, res.minimizer, dt, delta, sigmaz, omega, sigmax)
-# plot(res.u)
-# # plot!(prob.u0)
-# fidelitys = [(1- norm(x'*psitarget)^2) for x in psi]
-# plot(fidelitys)
+@show res.objective
+@show res.minimizer
+psi = psi_dynamics(psi0, res.minimizer, dt, delta, sigmaz, omega, sigmax)
+plot(res.u)
+# plot!(prob.u0)
+fidelitys = [(1- fidelity(x, psitarget)) for x in psi]
+plot(fidelitys)
 
 
 # optf = Optimization.instantiate_function(optf, u0, AutoForwardDiff(), [delta, sigmaz, omega, sigmax, psitarget, psi0])
@@ -161,3 +166,13 @@ plot(fidelity)
 
 # gradient_disc_stabilization_obj(u0)
 
+# using SparseConnectivityTracer
+# import DifferentiationInterface as DI
+# using SparseDiffTools
+
+# coloring_algorithm = DI.GreedyColoringAlgorithm()
+# sparsity_detector = ()
+
+# optf = OptimizationFunction(rosenbrock,
+#     ADTypes.AutoSparse(AutoFiniteDiff(); sparsity_detector, coloring_algorithm),
+#     cons = con2_c)
